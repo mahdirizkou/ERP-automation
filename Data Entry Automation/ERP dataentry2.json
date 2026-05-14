@@ -1,0 +1,434 @@
+{
+  "name": "ERP Data Cleaning Automation (Webhook Ready)",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "erp-cleaning",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "webhook-trigger",
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [0, 300],
+      "webhookId": "erp-cleaning"
+    },
+    {
+      "parameters": {
+        "resource": "spreadsheet",
+        "title": "=ERP_Cleaned_Data_{{ $now.format('yyyy-MM-dd_HH-mm') }}",
+        "sheetsUi": {
+          "sheetValues": [
+            { "title": "CLEAN_DATA" },
+            { "title": "ERROR_LOG" },
+            { "title": "SUMMARY" }
+          ]
+        }
+      },
+      "id": "create-spreadsheet",
+      "name": "Create Spreadsheet",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [220, 300],
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "YOUR_CREDENTIAL_ID",
+          "name": "Google Sheets OAuth2 API"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "sheet-id-assignment",
+              "name": "spreadsheetId",
+              "value": "={{ $json.spreadsheetId }}",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {
+          "includeOtherFields": false
+        }
+      },
+      "id": "store-sheet-id",
+      "name": "Store Sheet ID",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [440, 300]
+    },
+    {
+      "parameters": {
+        "documentId": "YOUR_SOURCE_SPREADSHEET_ID",
+        "sheetName": "Pharma_data",
+        "options": {}
+      },
+      "id": "read-source",
+      "name": "Read Pharma Data",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [660, 300],
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "YOUR_CREDENTIAL_ID",
+          "name": "Google Sheets OAuth2 API"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const seen = new Set();\n\nreturn items.map(item => {\n  const raw = item.json;\n\n  const quantity = Number(raw['Quantity']) || 0;\n  const price    = Number(raw['Price'])    || 0;\n  const sales    = Number(raw['Sales'])    || 0;\n\n  const errors = [];\n\n  const customerName = (raw['Customer Name'] || '').trim();\n  const productName  = (raw['Product Name']  || '').trim();\n  const month        = (raw['Month']         || '').toString().trim();\n  const year         = (raw['Year']          || '').toString().trim();\n\n  if (!customerName)\n    errors.push('Missing Customer Name');\n\n  if (!productName)\n    errors.push('Missing Product Name');\n\n  if (quantity <= 0)\n    errors.push('Invalid Quantity');\n\n  if (price <= 0)\n    errors.push('Invalid Price');\n\n  if (Math.abs(sales - quantity * price) > 0.01)\n    errors.push('Sales mismatch (expected: ' + (quantity * price).toFixed(2) + ')');\n\n  const duplicateKey = [\n    customerName.toLowerCase(),\n    productName.toLowerCase(),\n    month.toLowerCase(),\n    year.toLowerCase()\n  ].join('|');\n\n  let isDuplicate = false;\n  if (seen.has(duplicateKey)) {\n    isDuplicate = true;\n    errors.push('Duplicate Record');\n  } else {\n    seen.add(duplicateKey);\n  }\n\n  return {\n    json: {\n      'Customer Name': customerName,\n      'Product Name':  productName,\n      Month:           month,\n      Year:            year,\n      Quantity:        quantity,\n      Price:           price,\n      Sales:           sales,\n      _isDuplicate:    isDuplicate,\n      _isValid:        errors.length === 0,\n      _errorReason:    errors.join(', ')\n    }\n  };\n});"
+      },
+      "id": "clean-validate",
+      "name": "Cleaning + Validation",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [900, 300]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ $json._isValid }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      },
+      "id": "if-valid",
+      "name": "IF VALID",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [1120, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "return items.map(item => {\n  const { _isValid, _isDuplicate, _errorReason, ...cleanFields } = item.json;\n  return { json: cleanFields };\n});"
+      },
+      "id": "strip-meta-clean",
+      "name": "Strip Metadata (Clean)",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1340, 160]
+    },
+    {
+      "parameters": {
+        "operation": "append",
+        "documentId": {
+          "__rl": true,
+          "value": "={{ $('Store Sheet ID').first().json.spreadsheetId }}",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "CLEAN_DATA",
+          "mode": "name"
+        },
+        "columns": {
+          "mappingMode": "autoMapInputData"
+        },
+        "options": {}
+      },
+      "id": "append-clean",
+      "name": "Append CLEAN_DATA",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [1540, 160],
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "YOUR_CREDENTIAL_ID",
+          "name": "Google Sheets OAuth2 API"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "return items.map(item => {\n  const { _isValid, _isDuplicate, _errorReason, ...rest } = item.json;\n  return {\n    json: {\n      ...rest,\n      errorReason: _errorReason\n    }\n  };\n});"
+      },
+      "id": "strip-meta-error",
+      "name": "Strip Metadata (Error)",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1340, 440]
+    },
+    {
+      "parameters": {
+        "operation": "append",
+        "documentId": {
+          "__rl": true,
+          "value": "={{ $('Store Sheet ID').first().json.spreadsheetId }}",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "ERROR_LOG",
+          "mode": "name"
+        },
+        "columns": {
+          "mappingMode": "autoMapInputData"
+        },
+        "options": {}
+      },
+      "id": "append-error",
+      "name": "Append ERROR_LOG",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [1540, 440],
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "YOUR_CREDENTIAL_ID",
+          "name": "Google Sheets OAuth2 API"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "mode": "combine",
+        "combineBy": "combineAll",
+        "options": {}
+      },
+      "id": "merge",
+      "name": "Merge",
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3,
+      "position": [1760, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "const allItems = $('Cleaning + Validation').all();\n\nconst totalRows     = allItems.length;\nconst validRows     = allItems.filter(i => i.json._isValid).length;\nconst invalidRows   = totalRows - validRows;\nconst duplicateRows = allItems.filter(i => i.json._isDuplicate).length;\nconst successRate   = totalRows > 0\n  ? ((validRows / totalRows) * 100).toFixed(2) + '%'\n  : '0%';\n\nconst spreadsheetId = $('Store Sheet ID').first().json.spreadsheetId;\n\nreturn [{\n  json: {\n    totalRows,\n    validRows,\n    invalidRows,\n    duplicateRows,\n    successRate,\n    generatedAt: new Date().toISOString(),\n    spreadsheetUrl: `https://docs.google.com/spreadsheets/d/${spreadsheetId}/edit#gid=0`,\n    errorLogUrl:    `https://docs.google.com/spreadsheets/d/${spreadsheetId}/edit#gid=1`\n  }\n}];"
+      },
+      "id": "summary",
+      "name": "Generate Summary",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1980, 300]
+    },
+    {
+      "parameters": {
+        "operation": "append",
+        "documentId": {
+          "__rl": true,
+          "value": "={{ $('Store Sheet ID').first().json.spreadsheetId }}",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "SUMMARY",
+          "mode": "name"
+        },
+        "columns": {
+          "mappingMode": "autoMapInputData"
+        },
+        "options": {}
+      },
+      "id": "append-summary",
+      "name": "Append SUMMARY",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [2200, 300],
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "YOUR_CREDENTIAL_ID",
+          "name": "Google Sheets OAuth2 API"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={\n  \"totalRows\":      {{ $('Generate Summary').item.json.totalRows }},\n  \"validRows\":      {{ $('Generate Summary').item.json.validRows }},\n  \"invalidRows\":    {{ $('Generate Summary').item.json.invalidRows }},\n  \"duplicateRows\":  {{ $('Generate Summary').item.json.duplicateRows }},\n  \"successRate\":    \"{{ $('Generate Summary').item.json.successRate }}\",\n  \"generatedAt\":    \"{{ $('Generate Summary').item.json.generatedAt }}\",\n  \"spreadsheetUrl\": \"{{ $('Generate Summary').item.json.spreadsheetUrl }}\",\n  \"errorLogUrl\":    \"{{ $('Generate Summary').item.json.errorLogUrl }}\"\n}",
+        "options": {
+          "responseHeaders": {
+            "entries": [
+              {
+                "name": "Access-Control-Allow-Origin",
+                "value": "*"
+              },
+              {
+                "name": "Access-Control-Allow-Headers",
+                "value": "Content-Type"
+              }
+            ]
+          }
+        }
+      },
+      "id": "respond-webhook",
+      "name": "Respond to Webhook",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [2420, 300]
+    }
+  ],
+  "connections": {
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "Create Spreadsheet",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Create Spreadsheet": {
+      "main": [
+        [
+          {
+            "node": "Store Sheet ID",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Store Sheet ID": {
+      "main": [
+        [
+          {
+            "node": "Read Pharma Data",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Read Pharma Data": {
+      "main": [
+        [
+          {
+            "node": "Cleaning + Validation",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Cleaning + Validation": {
+      "main": [
+        [
+          {
+            "node": "IF VALID",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IF VALID": {
+      "main": [
+        [
+          {
+            "node": "Strip Metadata (Clean)",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Strip Metadata (Error)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Strip Metadata (Clean)": {
+      "main": [
+        [
+          {
+            "node": "Append CLEAN_DATA",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Strip Metadata (Error)": {
+      "main": [
+        [
+          {
+            "node": "Append ERROR_LOG",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Append CLEAN_DATA": {
+      "main": [
+        [
+          {
+            "node": "Merge",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Append ERROR_LOG": {
+      "main": [
+        [
+          {
+            "node": "Merge",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "Merge": {
+      "main": [
+        [
+          {
+            "node": "Generate Summary",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Generate Summary": {
+      "main": [
+        [
+          {
+            "node": "Append SUMMARY",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Append SUMMARY": {
+      "main": [
+        [
+          {
+            "node": "Respond to Webhook",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  }
+}
